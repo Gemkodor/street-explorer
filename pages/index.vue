@@ -60,6 +60,7 @@ const startTracking = () => {
     }
 
     isTracking.value = true;
+    requestWakeLock();
 
     watchId = navigator.geolocation.watchPosition((position) => {
         const coords = [position.coords.latitude, position.coords.longitude];
@@ -105,5 +106,15 @@ const haversineDistance = (a, b) => {
         Math.cos(φ1) * Math.cos(φ2) *
         Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
     return R * (2 * Math.atan2(Math.sqrt(d), Math.sqrt(1 - d))); // in metres
+}
+
+const requestWakeLock = () => {
+    let wakeLock: WakeLockSentinel | null = null;
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Wake Lock is active!');
+    } catch (err) {
+        console.error(`${err.name}, ${err.message}`);
+    }
 }
 </script>
