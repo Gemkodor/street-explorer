@@ -2,5 +2,5 @@
 export default defineNuxtConfig({
   compatibilityDate: '2024-11-01',
   devtools: { enabled: true },
-  modules: ['@nuxt/eslint', '@nuxtjs/leaflet']
+  modules: ['@nuxt/eslint', '@nuxtjs/leaflet', '@nuxtjs/tailwindcss'],
 })

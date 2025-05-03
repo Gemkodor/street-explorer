@@ -1,5 +1,5 @@
 <template>
-    <LMap v-if="userPosition" ref="map" style="height: 70vh; width: 100%" :zoom="zoom" :center="userPosition"
+    <LMap v-if="userPosition" ref="map" style="height: 60vh; width: 100%" :zoom="zoom" :center="userPosition"
         :use-global-leaflet="false">
         <LTileLayer :url="tileLayerUrl" :attribution="tileLayerAttribution" layer-type="base" name="OpenStreetMap" />
         <LMarker :lat-lng="userPosition" />
@@ -7,41 +7,81 @@
     </LMap>
 
     <div v-if="isTracking">
-        Enregistrement en cours...<br />
+        <div class="flex flex-row justify-center items-center">
+            <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
+                <strong class="font-normal">Temps :</strong> <br />
+                <span class="font-bold">{{ getTimeInHours() }}</span>
 
-        <button @click="stopTracking">Arrêter l'enregistrement</button>
+            </div>
+            <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
+                <strong class="font-medium">Distance :</strong> <br />
+                <span class="font-bold">0m</span>
+            </div>
+        </div>
 
-        <div v-for="coords in path">
-            <p>Latitude: {{ coords[0] }}, Longitude: {{ coords[1] }}</p>
+        <div class="flex flex-row justify-center items-center">
+            <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
+                <strong class="font-medium">Vitesse actuelle :</strong> <br />
+                <span class="font-bold">0 km/h</span>
+            </div>
+            <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
+                <strong class="font-medium">Vitesse moyenne :</strong> <br />
+                <span class="font-bold">0 km/h</span>
+            </div>
+        </div>
+
+        <div class="text-center">
+            <button class="py-1 pr-2 pl-2 m-2 bg-cyan-600 text-white rounded-sm" @click="stopTracking">Arrêter
+                l'enregistrement</button>
         </div>
     </div>
     <div v-else>
-        <button @click="startTracking" class="fixed top-4 left-4 z-50 p-2 bg-blue-600 text-white rounded">
-            Enregistrer le parcours
-        </button>
-    </div>
-    <p>
+        <div class="flex flex-row justify-center items-center">
+            <button @click="startTracking(false)" class="py-1 pr-2 pl-2 m-2 bg-cyan-600 text-white rounded-sm">
+                Enregistrer le parcours
+            </button>
 
-    </p>
+            <button @click="startTracking(true)" class="py-1 pr-2 pl-2 m-2 bg-cyan-600 text-white rounded-sm">
+                Enregistrer le parcours (dev)
+            </button>
+        </div>
+    </div>
 </template>
 
 <script setup lang="ts">
-const userPosition = ref(null);
-const path = ref([]);
-const zoom = ref(17);
-const isTracking = ref(false);
-let watchId = null;
+const userPosition = ref<[number, number]>();
+const path = ref<[number, number][]>([]);
+const zoom = ref<number>(17);
+const isTracking = ref<boolean>(false);
+let watchId: number | null = null;
+let watchIdDev: NodeJS.Timeout | null = null;
+let timeId: NodeJS.Timeout | null = null;
+const time = ref<number>(0);
+
+const devModeStartPoint: [number, number] = [46.038206977649395, 4.120474065622551];
 
 const tileLayerUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const tileLayerAttribution = '&copy; OpenStreetMap contributors';
 
 onMounted(() => {
+    getCurrentPosition(false); // Get the current position on mount
+});
+
+const getCurrentPosition = (devMode: boolean = false) => {
     if (!navigator.geolocation) return alert('Geolocation not supported');
 
     navigator.geolocation.getCurrentPosition((pos) => {
-        const coords = [pos.coords.latitude, pos.coords.longitude];
-        userPosition.value = coords;
-        path.value.push(coords);
+        const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+
+        if (devMode) {
+            userPosition.value = devModeStartPoint;
+            path.value = [
+                devModeStartPoint
+            ];
+        } else {
+            userPosition.value = coords;
+            path.value.push(coords);
+        }
     }, (err) => {
         console.error('GPS error', err);
     },
@@ -51,40 +91,68 @@ onMounted(() => {
             timeout: 10000
         }
     );
-});
+}
 
-const startTracking = () => {
+const startTracking = (devMode: boolean = false) => {
     if (!navigator.geolocation) {
         console.log("Geolocation is not supported by this browser.");
         return;
     }
 
     isTracking.value = true;
+    time.value = 0;
+    path.value = [];
+    getCurrentPosition(devMode); // Get the current position when starting tracking
     requestWakeLock();
 
-    watchId = navigator.geolocation.watchPosition((position) => {
-        const coords = [position.coords.latitude, position.coords.longitude];
+    timeId = setInterval(() => {
+        time.value += 1;
+    }, 1000);
 
-        if (!userPosition.value || haversineDistance(userPosition.value, coords) > 10) {
-            // Only update the path if the user has moved more than 10 meters
+    if (devMode) {
+        userPosition.value = devModeStartPoint;
+        path.value = [
+            devModeStartPoint
+        ];
+        watchIdDev = setInterval(() => {
+            const coords: [number, number] = [path.value[0][0] + Math.random() * 0.0012, path.value[0][1] + Math.random() * 0.0012];
             userPosition.value = coords;
-            path.value.push(coords);
-        }
-    }, (error) => {
-        console.error("Error getting location: ", error);
-    },
-        {
-            enableHighAccuracy: true,
-            maximumAge: 1000,
-            timeout: 10000
-        }
-    );
+            path.value = [...path.value, coords];
+        }, 1000);
+        return;
+    } else {
+        watchId = navigator.geolocation.watchPosition((position) => {
+            const coords: [number, number] = [position.coords.latitude, position.coords.longitude];
+
+            if (!userPosition.value || haversineDistance(userPosition.value, coords) > 10) {
+                // Only update the path if the user has moved more than 10 meters
+                userPosition.value = coords;
+                path.value = [...path.value, coords];
+            }
+        }, (error) => {
+            console.error("Error getting location: ", error);
+        },
+            {
+                enableHighAccuracy: true,
+                maximumAge: 1000,
+                timeout: 10000
+            }
+        );
+    }
 }
 
 const stopTracking = () => {
     if (watchId) {
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
+    }
+    if (watchIdDev) {
+        clearInterval(watchIdDev);
+        watchIdDev = null;
+    }
+    if (timeId) {
+        clearInterval(timeId);
+        timeId = null;
     }
     isTracking.value = false;
 
@@ -95,7 +163,7 @@ const stopTracking = () => {
     }
 }
 
-const haversineDistance = (a, b) => {
+const haversineDistance = (a: [number, number], b: [number, number]) => {
     const R = 6371e3; // metres
     const φ1 = a[0] * Math.PI / 180; // φ in radians
     const φ2 = b[0] * Math.PI / 180; // φ in radians
@@ -108,13 +176,20 @@ const haversineDistance = (a, b) => {
     return R * (2 * Math.atan2(Math.sqrt(d), Math.sqrt(1 - d))); // in metres
 }
 
-const requestWakeLock = () => {
+const requestWakeLock = async () => {
     let wakeLock: WakeLockSentinel | null = null;
     try {
         wakeLock = await navigator.wakeLock.request('screen');
         console.log('Wake Lock is active!');
-    } catch (err) {
+    } catch (err: any) {
         console.error(`${err.name}, ${err.message}`);
     }
+}
+
+const getTimeInHours = () => {
+    const hours = Math.floor(time.value / 3600);
+    const minutes = Math.floor((time.value % 3600) / 60);
+    const seconds = time.value % 60;
+    return `${hours}h ${minutes}m ${seconds}s`;
 }
 </script>
