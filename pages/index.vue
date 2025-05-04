@@ -15,18 +15,7 @@
             </div>
             <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
                 <strong class="font-medium">Distance :</strong> <br />
-                <span class="font-bold">0m</span>
-            </div>
-        </div>
-
-        <div class="flex flex-row justify-center items-center">
-            <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
-                <strong class="font-medium">Vitesse actuelle :</strong> <br />
-                <span class="font-bold">0 km/h</span>
-            </div>
-            <div class="border border-gray-300 rounded-md p-2 m-2 w-1/2 text-center">
-                <strong class="font-medium">Vitesse moyenne :</strong> <br />
-                <span class="font-bold">0 km/h</span>
+                <span class="font-bold">{{ formatDistance(distance) }}</span>
             </div>
         </div>
 
@@ -49,8 +38,8 @@
 </template>
 
 <script setup lang="ts">
-const userPosition = ref<[number, number]>();
-const path = ref<[number, number][]>([]);
+const userPosition = ref<TrackedPoint>();
+const path = ref<TrackedPoint[]>([]);
 const zoom = ref<number>(17);
 const isTracking = ref<boolean>(false);
 let watchId: number | null = null;
@@ -58,10 +47,35 @@ let watchIdDev: NodeJS.Timeout | null = null;
 let timeId: NodeJS.Timeout | null = null;
 const time = ref<number>(0);
 
-const devModeStartPoint: [number, number] = [46.038206977649395, 4.120474065622551];
+const devModeStartPoint: TrackedPoint = {
+    lat: 46.038206977649395,
+    lng: 4.120474065622551,
+    timestamp: Date.now()
+};
 
 const tileLayerUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const tileLayerAttribution = '&copy; OpenStreetMap contributors';
+
+const distance = computed(() => {
+    if (import.meta.client) {
+        return calculateDistance(path.value);
+    }
+
+    return 0;
+});
+
+type TrackedPoint = {
+    lat: number;
+    lng: number;
+    timestamp: number;
+}
+
+type TrackedPath = {
+    id: string;
+    name?: string;
+    date: number; // timestamp
+    points: TrackedPoint[];
+}
 
 onMounted(() => {
     getCurrentPosition(false); // Get the current position on mount
@@ -71,7 +85,11 @@ const getCurrentPosition = (devMode: boolean = false) => {
     if (!navigator.geolocation) return alert('Geolocation not supported');
 
     navigator.geolocation.getCurrentPosition((pos) => {
-        const coords: [number, number] = [pos.coords.latitude, pos.coords.longitude];
+        const point: TrackedPoint = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            timestamp: Date.now()
+        };
 
         if (devMode) {
             userPosition.value = devModeStartPoint;
@@ -79,8 +97,8 @@ const getCurrentPosition = (devMode: boolean = false) => {
                 devModeStartPoint
             ];
         } else {
-            userPosition.value = coords;
-            path.value.push(coords);
+            userPosition.value = point;
+            path.value = [...path.value, point];
         }
     }, (err) => {
         console.error('GPS error', err);
@@ -115,27 +133,33 @@ const startTracking = (devMode: boolean = false) => {
             devModeStartPoint
         ];
         watchIdDev = setInterval(() => {
-            const coords: [number, number] = [path.value[0][0] + Math.random() * 0.0012, path.value[0][1] + Math.random() * 0.0012];
+            const coords: TrackedPoint = {
+                lat: devModeStartPoint.lat + Math.random() * 0.0012,
+                lng: devModeStartPoint.lng + Math.random() * 0.0012,
+                timestamp: Date.now()
+            };
+
             userPosition.value = coords;
             path.value = [...path.value, coords];
         }, 1000);
         return;
     } else {
         watchId = navigator.geolocation.watchPosition((position) => {
-            const coords: [number, number] = [position.coords.latitude, position.coords.longitude];
+            const point: TrackedPoint = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+                timestamp: Date.now()
+            };
 
-            if (!userPosition.value || haversineDistance(userPosition.value, coords) > 10) {
-                // Only update the path if the user has moved more than 10 meters
-                userPosition.value = coords;
-                path.value = [...path.value, coords];
-            }
+            userPosition.value = point;
+            path.value = [...path.value, point];
         }, (error) => {
             console.error("Error getting location: ", error);
         },
             {
                 enableHighAccuracy: true,
-                maximumAge: 1000,
-                timeout: 10000
+                maximumAge: 0,
+                timeout: 5000
             }
         );
     }
@@ -156,24 +180,22 @@ const stopTracking = () => {
     }
     isTracking.value = false;
 
+    savePathToStorage(path.value);
+}
+
+const savePathToStorage = (path: TrackedPoint[]) => {
+    const existing = JSON.parse(localStorage.getItem('trackedPaths') || '[]') as TrackedPath[];
+    const newPath: TrackedPath = {
+        id: crypto.randomUUID(),
+        date: Date.now(),
+        points: path,
+    };
+
     try {
-        localStorage.setItem('lastTrackedPath', JSON.stringify(path.value));
+        localStorage.setItem('trackedPaths', JSON.stringify([...existing, newPath]));
     } catch (error) {
         console.error('Error saving path to localStorage', error);
     }
-}
-
-const haversineDistance = (a: [number, number], b: [number, number]) => {
-    const R = 6371e3; // metres
-    const φ1 = a[0] * Math.PI / 180; // φ in radians
-    const φ2 = b[0] * Math.PI / 180; // φ in radians
-    const Δφ = (b[0] - a[0]) * Math.PI / 180; // difference in latitude in radians
-    const Δλ = (b[1] - a[1]) * Math.PI / 180; // difference in longitude in radians
-
-    const d = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-        Math.cos(φ1) * Math.cos(φ2) *
-        Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-    return R * (2 * Math.atan2(Math.sqrt(d), Math.sqrt(1 - d))); // in metres
 }
 
 const requestWakeLock = async () => {
@@ -191,5 +213,37 @@ const getTimeInHours = () => {
     const minutes = Math.floor((time.value % 3600) / 60);
     const seconds = time.value % 60;
     return `${hours}h ${minutes}m ${seconds}s`;
+}
+
+const calculateDistance = (path: TrackedPoint[]) => {
+    let distance = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+        const lat1 = path[i].lat;
+        const lon1 = path[i].lng;
+        const lat2 = path[i + 1].lat;
+        const lon2 = path[i + 1].lng;
+
+        const R = 6371e3; // metres
+        const φ1 = lat1 * Math.PI / 180; // φ in radians
+        const φ2 = lat2 * Math.PI / 180; // φ in radians
+        const Δφ = (lat2 - lat1) * Math.PI / 180; // in radians
+        const Δλ = (lon2 - lon1) * Math.PI / 180; // in radians
+
+        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        distance += R * c; // in metres
+    }
+    return distance;
+}
+
+const formatDistance = (distance: number) => {
+    if (distance < 1000) {
+        return `${Math.round(distance)} m`;
+    } else {
+        return `${(distance / 1000).toFixed(2)} km`;
+    }
 }
 </script>
